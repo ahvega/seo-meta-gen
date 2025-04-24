@@ -1,0 +1,49 @@
+post-type: page
+https://consultoria-aplicada.com/
+https://consultoria-aplicada.com/nuestros-servicios/
+https://consultoria-aplicada.com/consultoria-aplicada/nuestro-enfoque/
+https://consultoria-aplicada.com/clientes/
+https://consultoria-aplicada.com/consultoria-aplicada/nuestro-equipo/
+https://consultoria-aplicada.com/consultoria-aplicada/socios-estrategicos/
+https://consultoria-aplicada.com/perspectivas/
+
+post-type: stm_service
+https://consultoria-aplicada.com/servicios/planificacion-estrategica/
+https://consultoria-aplicada.com/servicios/evaluacion-y-sistematizacion-de-proyectos/
+https://consultoria-aplicada.com/servicios/reclutamiento-gerencial/
+https://consultoria-aplicada.com/servicios/coaching-ejecutivo-avanzado/
+https://consultoria-aplicada.com/servicios/facilitacion-de-procesos-participativos/
+https://consultoria-aplicada.com/servicios/formacion-corporativa/
+
+taxonomy: stm_service_category
+https://consultoria-aplicada.com/area-de-servicio/consultoria-estrategica/
+https://consultoria-aplicada.com/area-de-servicio/desarrollo-de-liderazgo/
+https://consultoria-aplicada.com/area-de-servicio/gestion-del-talento/
+https://consultoria-aplicada.com/area-de-servicio/desarrollo-organizacional/
+https://consultoria-aplicada.com/area-de-servicio/transformacion-cultural/
+https://consultoria-aplicada.com/area-de-servicio/gestion-del-conocimiento/
+
+post-type: post
+https://consultoria-aplicada.com/renovacion-empresarial-como-evitar-el-deterioro-silencioso/
+https://consultoria-aplicada.com/como-convertir-un-periodo-dificil-en-la-base-para-un-exito-futuro/
+https://consultoria-aplicada.com/sorprende-a-tus-clientes-y-ellos-te-sorprenderan-a-ti/
+
+post-type: stm_staff
+https://consultoria-aplicada.com/equipo/alfredo-enrique-umana/
+https://consultoria-aplicada.com/equipo/rosa-angela-morales-betanco/
+https://consultoria-aplicada.com/equipo/diana-marcela-landa-vayona/
+https://consultoria-aplicada.com/equipo/ruth-ileana-varela-alonzo/
+
+taxonomy: category
+https://consultoria-aplicada.com/categoria/cultura-organizacional/
+https://consultoria-aplicada.com/categoria/gestion-del-cambio/
+https://consultoria-aplicada.com/categoria/lecciones-empresariales/
+https://consultoria-aplicada.com/categoria/estrategias-de-reaccion-rapida/
+https://consultoria-aplicada.com/categoria/innovacion-en-crisis/
+https://consultoria-aplicada.com/categoria/lidesazgo-estrategico/
+https://consultoria-aplicada.com/categoria/productividad-y-planificacion/
+https://consultoria-aplicada.com/categoria/resiliencia-organizacional/
+https://consultoria-aplicada.com/categoria/innovacion/
+https://consultoria-aplicada.com/categoria/contabilidad-y-finanzas/
+https://consultoria-aplicada.com/categoria/economia/
+https://consultoria-aplicada.com/categoria/planes-de-negocios/

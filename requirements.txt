@@ -1,0 +1,11 @@
+requests>=2.31.0
+beautifulsoup4==4.12.3
+python-dotenv==1.0.0
+openai==1.12.0
+google-generativeai==0.3.2
+deepseek==1.0.0
+anthropic==0.18.1
+python-wordpress-xmlrpc==2.3
+pytest==7.4.3
+tqdm==4.66.2
+langdetect==1.0.9 

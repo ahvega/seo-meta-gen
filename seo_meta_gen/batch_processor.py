@@ -41,6 +41,15 @@ class BatchProcessor:
             with open(input_file, 'r') as f:
                 data = json.load(f)
             
+            # Handle both list and dictionary formats
+            if isinstance(data, list):
+                # If it's a list, take the first item (assuming it's a dictionary)
+                if data and isinstance(data[0], dict):
+                    data = data[0]
+                else:
+                    logger.error("Invalid input format: Expected list containing dictionary")
+                    return
+            
             # Extract URLs for the specified post type
             urls = data.get(post_type, [])
             if not urls:

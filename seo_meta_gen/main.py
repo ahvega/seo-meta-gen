@@ -16,7 +16,8 @@ def parse_args():
     
     # Required arguments
     parser.add_argument('--phase', type=str, required=True,
-                      choices=['discover-content', 'generate-metadata', 'write-to-db'],
+                      choices=['discover-content', 'generate-metadata', 'enhance-sentiment', 
+                              'enhance-value-prop', 'enhance-region', 'write-to-db'],
                       help='Phase of the process to execute')
     parser.add_argument('--post-type', type=str, required=True,
                       help='Type of posts to process')
@@ -25,7 +26,7 @@ def parse_args():
     parser.add_argument('--url-file', type=str,
                       help='File containing URLs to process (required for discover-content phase)')
     parser.add_argument('--input-file', type=str,
-                      help='Input file from previous phase (required for generate-metadata and write-to-db phases)')
+                      help='Input file from previous phase (required for all phases except discover-content)')
     parser.add_argument('--output-file', type=str,
                       help='Output file to write results to')
     
@@ -81,6 +82,27 @@ def main():
             generator = MetadataGenerator(config)
             processor = BatchProcessor(generator, config)
             processor.process_batch(args.input_file, args.post_type, args.mode)
+            
+        elif args.phase == 'enhance-sentiment':
+            if not args.input_file:
+                raise ValueError("--input-file is required for enhance-sentiment phase")
+            from .metadata_generator import MetadataGenerator
+            generator = MetadataGenerator(config)
+            generator.enhance_metadata_with_sentiment(args.input_file)
+            
+        elif args.phase == 'enhance-value-prop':
+            if not args.input_file:
+                raise ValueError("--input-file is required for enhance-value-prop phase")
+            from .metadata_generator import MetadataGenerator
+            generator = MetadataGenerator(config)
+            generator.enhance_metadata_with_value_prop(args.input_file)
+            
+        elif args.phase == 'enhance-region':
+            if not args.input_file:
+                raise ValueError("--input-file is required for enhance-region phase")
+            from .metadata_generator import MetadataGenerator
+            generator = MetadataGenerator(config)
+            generator.enhance_metadata_with_region(args.input_file)
             
         elif args.phase == 'write-to-db':
             if not args.input_file:

@@ -5,6 +5,7 @@ AI-driven SEO metadata generation module with multi-provider support
 # Standard library imports
 import json
 import logging
+import os
 import re
 import random
 import time

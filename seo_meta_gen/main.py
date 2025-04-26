@@ -1,84 +1,97 @@
 """
-Main script for SEO metadata generation
+Main entry point for SEO metadata generation tool
 """
 
-import logging
 import argparse
-import json
-from .batch_processor import BatchProcessor
-from .metadata_generator import MetadataGenerator
-from .url_manager import URLManager
+import logging
+from typing import Optional
+from .config import Config, load_config, RegionConfig
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def main():
-    """Main function to run the SEO metadata generation process."""
+def parse_args():
+    """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='SEO Metadata Generator')
-    parser.add_argument('--provider', type=str, default='google', 
-                       choices=['openai', 'google', 'deepseek', 'anthropic'],
-                       help='AI provider to use (default: google)')
-    parser.add_argument('--post-type', type=str, 
-                       help='Specific post type to process (default: all)')
-    parser.add_argument('--source', type=str, default='my_site_urls.json',
-                       help='Source file to process (URL list or metadata file) (default: my_site_urls.json)')
-    parser.add_argument('--write-to-db', action='store_true',
-                       help='Write generated metadata to WordPress database')
-    parser.add_argument('--dry-run', action='store_true',
-                       help='Run in dry-run mode without making actual changes')
-    parser.add_argument('--taxonomy', type=str,
-                       help='Taxonomy to process')
-    parser.add_argument('--terms', nargs='+',
-                       help='Specific terms to process')
     
-    args = parser.parse_args()
+    # Required arguments
+    parser.add_argument('--phase', type=str, required=True,
+                      choices=['discover-content', 'generate-metadata', 'write-to-db'],
+                      help='Phase of the process to execute')
+    parser.add_argument('--post-type', type=str, required=True,
+                      help='Type of posts to process')
     
+    # Phase-specific arguments
+    parser.add_argument('--url-file', type=str,
+                      help='File containing URLs to process (required for discover-content phase)')
+    parser.add_argument('--input-file', type=str,
+                      help='Input file from previous phase (required for generate-metadata and write-to-db phases)')
+    parser.add_argument('--output-file', type=str,
+                      help='Output file to write results to')
+    
+    # Optional arguments
+    parser.add_argument('--provider', type=str, default='google',
+                      choices=['google', 'openai', 'anthropic', 'deepseek'],
+                      help='AI provider to use (default: google)')
+    parser.add_argument('--region', type=str, default='global',
+                      help='Region for content targeting (default: global)')
+    parser.add_argument('--mode', type=str, default='full',
+                      choices=['full', 'partial'],
+                      help='Processing mode (default: full)')
+    parser.add_argument('--debug', action='store_true',
+                      help='Enable debug logging')
+    
+    return parser.parse_args()
+
+def main():
+    """Main execution function"""
+    args = parse_args()
+    
+    # Set up logging
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+    
+    # Load configuration
+    config = load_config()
+    
+    # Update config with command line arguments
+    config.provider = args.provider
+    
+    # Set up region configuration if specified
+    if args.region != 'global':
+        config.region_config = RegionConfig(
+            region=args.region,
+            language='es'  # You might want to make this configurable
+        )
+    
+    # Execute appropriate phase
     try:
-        if args.taxonomy:
-            # Process taxonomy terms
-            generator = MetadataGenerator(provider=args.provider)
-            results = generator.process_taxonomies(args.taxonomy, args.terms)
+        if args.phase == 'discover-content':
+            if not args.url_file:
+                raise ValueError("--url-file is required for discover-content phase")
+            from .content_discovery import ContentDiscovery
+            discoverer = ContentDiscovery(config)
+            discoverer.process_urls(args.url_file, args.post_type)
             
-            # Save results
-            if results:
-                output_file = f"generated_metadata_{args.taxonomy}.json"
-                with open(f"output/{output_file}", "w", encoding="utf-8") as f:
-                    json.dump(results, f, indent=2, ensure_ascii=False)
-                logger.info(f"Saved results to output/{output_file}")
-            else:
-                logger.warning("No results generated")
-        else:
-            # Process URLs or metadata file
-            processor = BatchProcessor(
-                url_list_file=args.source,
-                provider=args.provider,
-                post_type=args.post_type,
-                write_to_db=args.write_to_db,
-                dry_run=args.dry_run
-            )
+        elif args.phase == 'generate-metadata':
+            if not args.input_file:
+                raise ValueError("--input-file is required for generate-metadata phase")
+            from .batch_processor import BatchProcessor
+            from .metadata_generator import MetadataGenerator
+            generator = MetadataGenerator(config)
+            processor = BatchProcessor(generator, config)
+            processor.process_batch(args.input_file, args.post_type, args.mode)
             
-            # Log appropriate information based on mode
-            if args.write_to_db:
-                logger.info(f"Writing to database (dry run: {args.dry_run})")
-            else:
-                logger.info(f"Starting process with provider: {args.provider}")
-                if args.post_type:
-                    logger.info(f"Processing post type: {args.post_type}")
-                
-            success = processor.run()
-            
-            if success:
-                logger.info("Process completed successfully")
-            else:
-                logger.error("Process failed")
+        elif args.phase == 'write-to-db':
+            if not args.input_file:
+                raise ValueError("--input-file is required for write-to-db phase")
+            from .db_writer import DatabaseWriter
+            writer = DatabaseWriter(config)
+            writer.write_batch(args.input_file, args.mode)
             
     except Exception as e:
-        logger.error(f"Error in main process: {e}")
+        logger.error(f"Error during {args.phase} phase: {str(e)}")
         raise
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main() 

@@ -26,6 +26,32 @@ class WordPressAPI:
         self.session = requests.Session()
         self.session.auth = self.auth
         
+    def get_post(self, post_id: int, post_type: str = 'posts') -> Optional[Dict]:
+        """
+        Get a WordPress post with its metadata.
+        
+        Args:
+            post_id: WordPress post ID
+            post_type: Type of post to get (posts, pages, etc.)
+            
+        Returns:
+            Optional[Dict]: Post data if successful, None otherwise
+        """
+        try:
+            endpoint = ENDPOINT_MAP.get(post_type, post_type)
+            url = f"{self.base_url}/wp-json/wp/v2/{endpoint}/{post_id}"
+            response = self.session.get(url)
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.error(f"Failed to get {post_type} {post_id}. Status code: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error getting {post_type} {post_id}: {str(e)}")
+            return None
+            
     def update_post(self, post_id: int, data: Dict[str, Any], post_type: str = 'posts') -> bool:
         """
         Update a WordPress post with new data.
@@ -42,7 +68,19 @@ class WordPressAPI:
             # Get the correct endpoint from ENDPOINT_MAP
             endpoint = ENDPOINT_MAP.get(post_type, post_type)
             url = f"{self.base_url}/wp-json/wp/v2/{endpoint}/{post_id}"
-            response = self.session.post(url, json=data)
+            
+            # Prepare the update data
+            update_data = {}
+            
+            # Handle rank_math data
+            if 'rank_math' in data:
+                update_data['rank_math'] = data['rank_math']
+                
+            # Handle meta data
+            if 'meta' in data:
+                update_data['meta'] = data['meta']
+                
+            response = self.session.post(url, json=update_data)
             
             if response.status_code == 200:
                 logger.info(f"Successfully updated {post_type} {post_id}")
@@ -122,6 +160,55 @@ class WordPressAPI:
                 
         except Exception as e:
             logger.error(f"Error in batch update: {e}")
+            return False
+            
+    def get_posts_to_process(self) -> List[Dict[str, Any]]:
+        """
+        Get list of posts that need metadata processing.
+        
+        Returns:
+            List[Dict[str, Any]]: List of posts to process
+        """
+        try:
+            # Add region parameter to filter if not global
+            params = {}
+            if self.config.region != 'global':
+                params['region'] = self.config.region
+                
+            response = self.session.get(
+                f"{self.base_url}/wp-json/wp/v2/posts",
+                params=params
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error fetching posts: {str(e)}")
+            return []
+            
+    def update_post_metadata(self, post_id: int, metadata: Dict[str, Any]) -> bool:
+        """
+        Update post metadata.
+        
+        Args:
+            post_id (int): WordPress post ID
+            metadata (Dict[str, Any]): Metadata to update
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Add region to metadata if not global
+            if self.config.region != 'global':
+                metadata['region'] = self.config.region
+                
+            response = self.session.post(
+                f"{self.base_url}/wp-json/wp/v2/posts/{post_id}",
+                json={'meta': metadata}
+            )
+            response.raise_for_status()
+            return True
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error updating metadata for post {post_id}: {str(e)}")
             return False
             
     # ... existing code ... 

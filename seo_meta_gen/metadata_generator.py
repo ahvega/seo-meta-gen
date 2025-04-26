@@ -3,7 +3,7 @@ AI-driven SEO metadata generation module with multi-provider support
 """
 
 import os
-from typing import Dict, Optional, Tuple, List
+from typing import Dict, Optional, Tuple, List, Any
 import openai
 import google.generativeai as genai
 import anthropic
@@ -14,13 +14,17 @@ from tqdm import tqdm
 import requests
 from bs4 import BeautifulSoup
 from .cost_calculator import CostCalculator
-from .config import ENDPOINT_MAP, POST_TYPE_CONTEXT, DEFAULT_CONFIG
+from .config import ENDPOINT_MAP, POST_TYPE_CONTEXT, DEFAULT_CONFIG, RegionConfig, Config
 from urllib.parse import urlparse
 from time import sleep
 import langdetect
 from langdetect import DetectorFactory
 import json
 from datetime import datetime
+import re
+import spacy
+from collections import Counter
+from textblob import TextBlob
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -39,20 +43,36 @@ class AIProvider(Enum):
 class MetadataGenerator:
     """Generates SEO metadata for content using AI providers."""
     
-    def __init__(self, provider: Optional[str] = None, language: Optional[str] = None):
-        """Initialize the MetadataGenerator."""
+    def __init__(self, config: Config) -> None:
+        self.config = config
         self.current_provider = None
         self.current_model = None
         self.last_cost = 0.0
         self.last_input_tokens = 0
         self.last_output_tokens = 0
         self.last_total_tokens = 0
-        self.provider = provider or os.getenv('PREFERRED_AI_PROVIDER', 'google')
+        self.provider = config.provider or os.getenv('PREFERRED_AI_PROVIDER', 'google')
         self.model = None
         self.cost_calculator = CostCalculator()
-        self.language = language  # Store the forced language if provided
+        self.language = config.language  # Store the forced language if provided
+        self.region_config = config.region_config
+        # RankMath recommended limits
+        self.title_max_length = 60  # Recommended for Google SERP display
+        self.title_absolute_max = 70  # Absolute maximum allowed by RankMath
+        self.description_max_length = 155  # Recommended for Google SERP display
+        self.description_absolute_max = 320  # Absolute maximum allowed by RankMath
+        self.keyword_min_length = 3
+        self.keyword_recommended_count = 3  # Recommended number of focus keywords
+        self.keyword_max_count = 10  # Arbitrary limit for safety
+        self.used_keywords = set()  # Track used keywords to avoid repetition
         logger.debug(f"Initializing MetadataGenerator with provider: {self.provider}")
         self._initialize_provider()
+        # Load spaCy model for NLP
+        try:
+            self.nlp = spacy.load("en_core_web_sm")
+        except Exception as e:
+            logger.error(f"Error loading spaCy model: {str(e)}")
+            self.nlp = None
 
     def _initialize_provider(self):
         """Initialize the selected AI provider with appropriate credentials"""
@@ -91,7 +111,7 @@ class MetadataGenerator:
                 # Set default model and validate it
                 self.model = os.getenv('GOOGLE_MODEL', 'gemini-1.5-pro')
                 # Validate model name
-                valid_google_models = ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-pro']
+                valid_google_models = ['gemini-2.5-flash-preview-04-17','gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-pro']
                 if self.model not in valid_google_models:
                     logger.warning(f"Invalid Google model name: {self.model}. Using default 'gemini-1.5-pro'")
                     self.model = 'gemini-1.5-pro'
@@ -140,13 +160,8 @@ class MetadataGenerator:
                 'acf_fields': {},
                 'url': url,
                 'post_id': None,
-                'post_type': post_type,
-                'processing_info': {
-                    'provider': self.provider,
-                    'model': self.model,
-                    'timestamp': None,
-                    'cost': None
-                }
+                'feat_img_id': None,
+                'post_type': post_type
             }
             
             # 1. Scrape the page content
@@ -195,8 +210,9 @@ class MetadataGenerator:
                 if posts:
                     post = posts[0]  # Get the first matching post
                     
-                    # Store post ID
+                    # Store post ID and featured image ID
                     content_data['post_id'] = post.get('id')
+                    content_data['feat_img_id'] = post.get('featured_media')
                     
                     # Update content from API if not found in page scraping
                     if not content_data['title']:
@@ -224,6 +240,7 @@ class MetadataGenerator:
             # Log extracted content
             logger.info("Extracted Content:")
             logger.info(f"Post ID: {content_data['post_id']}")
+            logger.info(f"Featured Image ID: {content_data['feat_img_id']}")
             logger.info(f"Title: {content_data['title']}")
             logger.info(f"Content (first 200 chars): {content_data['content'][:200]}")
             logger.info(f"Excerpt: {content_data['excerpt']}")
@@ -357,7 +374,7 @@ class MetadataGenerator:
             "Genera todos los metadatos en ESPAÑOL.",
             "\nDetalles del contenido:",
             f"Título: {content.get('title', '')}",
-            f"Contenido: {content.get('content', '')[:DEFAULT_CONFIG['max_content_length']]}",
+            f"Contenido: {content.get('content', '')[:self.config.max_content_length]}",  # Use config object
             f"Extracto: {content.get('excerpt', '')}",
         ]
         
@@ -450,7 +467,9 @@ class MetadataGenerator:
             'og_description': '',
             'twitter_title': '',
             'twitter_description': '',
-            'language': self.language
+            'language': self.language,
+            'post_id': content.get('post_id'),
+            'feat_img_id': content.get('feat_img_id')
         }
         
         # Split the response into lines and clean them
@@ -492,6 +511,39 @@ class MetadataGenerator:
         # Save the last field if we were collecting one
         if current_field and current_value:
             metadata[current_field] = ' '.join(current_value).strip()
+        
+        # Add region to focus keyword and meta description if region is specified
+        if self.region_config and self.region_config.region != 'global':
+            region = self.region_config.region
+            # Add region to focus keyword
+            if metadata['focus_keyword']:
+                metadata['focus_keyword'] = f"{metadata['focus_keyword']} {region}"
+            
+            # Add region to meta description if not already present
+            if metadata['meta_description'] and region.lower() not in metadata['meta_description'].lower():
+                # Try to add region before the call-to-action if present
+                if '¡Contáctanos!' in metadata['meta_description']:
+                    metadata['meta_description'] = metadata['meta_description'].replace(
+                        '¡Contáctanos!', 
+                        f'en {region} ¡Contáctanos!'
+                    )
+                else:
+                    # Add region at the end if no call-to-action
+                    metadata['meta_description'] = f"{metadata['meta_description']} en {region}"
+        
+        # Ensure proper character encoding for Spanish characters
+        for field in metadata:
+            if isinstance(metadata[field], str):
+                # First decode any Unicode escape sequences
+                try:
+                    metadata[field] = metadata[field].encode('latin1').decode('unicode-escape')
+                except:
+                    pass
+                # Then ensure proper UTF-8 encoding
+                try:
+                    metadata[field] = metadata[field].encode('utf-8').decode('utf-8')
+                except:
+                    pass
         
         # Log the parsed metadata for debugging
         logger.debug("Parsed Metadata:")
@@ -665,20 +717,20 @@ class MetadataGenerator:
                 output_tokens=output_tokens
             )
             
-            # Update processing info
-            content['processing_info'].update({
+            # Add processing info
+            metadata['processing_info'] = {
+                'provider': self.provider,
+                'model': self.model,
                 'timestamp': datetime.now().isoformat(),
                 'cost': cost,
                 'input_tokens': input_tokens,
                 'output_tokens': output_tokens,
                 'total_tokens': input_tokens + output_tokens
-            })
+            }
             
-            # Add processing info to metadata
-            metadata['processing_info'] = content['processing_info']
-            
-            # Add post ID to metadata
+            # Add post ID and featured image ID
             metadata['post_id'] = content['post_id']
+            metadata['feat_img_id'] = content['feat_img_id']
             
             return metadata
             
@@ -765,4 +817,433 @@ class MetadataGenerator:
             
         except Exception as e:
             logger.error(f"Error processing taxonomy {taxonomy_name}: {e}")
-            return {} 
+            return {}
+
+    def generate_metadata_for_post(self, content: str, title: str, excerpt: str) -> Dict[str, Any]:
+        """
+        Generate SEO metadata for a post
+        
+        Args:
+            content (str): Post content
+            title (str): Post title
+            excerpt (str): Post excerpt
+            
+        Returns:
+            Dict[str, Any]: Generated metadata
+        """
+        try:
+            # Clean and prepare content
+            cleaned_content = self._clean_content(content)
+            cleaned_title = self._clean_text(title)
+            cleaned_excerpt = self._clean_text(excerpt)
+
+            # Generate focus keywords first
+            focus_keywords = self._generate_focus_keywords(cleaned_content, cleaned_title)
+            primary_keyword = focus_keywords[0] if focus_keywords else ""
+
+            # Generate optimized metadata ensuring focus keyword presence
+            metadata = {
+                'title': self._generate_title(cleaned_title, primary_keyword),
+                'description': self._generate_description(cleaned_excerpt, cleaned_content, primary_keyword),
+                'focus_keyword': primary_keyword,
+                'secondary_keywords': focus_keywords[1:],
+                'keyword_density': self._calculate_keyword_density(cleaned_content, primary_keyword)
+            }
+
+            # Add region suffix if not global
+            if self.config.region != 'global':
+                metadata['title'] = self._add_region_suffix(metadata['title'])
+                metadata['focus_keyword'] = f"{metadata['focus_keyword']} {self.config.region}"
+
+            # Validate metadata
+            self._validate_metadata(metadata)
+
+            return metadata
+
+        except Exception as e:
+            logger.error(f"Error generating metadata: {str(e)}")
+            raise
+
+    def _clean_content(self, content: str) -> str:
+        """Clean and prepare content for processing"""
+        # Remove HTML tags
+        content = re.sub(r'<[^>]+>', ' ', content)
+        # Remove extra whitespace
+        content = re.sub(r'\s+', ' ', content)
+        # Remove special characters but keep spaces
+        content = re.sub(r'[^\w\s]', ' ', content)
+        return content.strip().lower()
+
+    def _clean_text(self, text: str) -> str:
+        """Clean text for title and description"""
+        # Remove HTML tags
+        text = re.sub(r'<[^>]+>', ' ', text)
+        # Remove extra whitespace
+        text = re.sub(r'\s+', ' ', text)
+        return text.strip()
+
+    def _generate_focus_keywords(self, content: str, title: str) -> List[str]:
+        """Generate focus keywords ensuring no repetition"""
+        # Combine title and content for keyword extraction
+        text = f"{title} {content}"
+        words = text.split()
+        word_freq = {}
+        
+        # Count word frequency
+        for word in words:
+            if len(word) >= self.keyword_min_length and word not in self.used_keywords:
+                word_freq[word] = word_freq.get(word, 0) + 1
+        
+        # Sort by frequency
+        sorted_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)
+        keywords = []
+        
+        # Get top keywords avoiding repetition
+        for word, _ in sorted_words:
+            if len(keywords) < self.keyword_recommended_count and word not in self.used_keywords:
+                keywords.append(word)
+                self.used_keywords.add(word)
+        
+        return keywords
+
+    def _calculate_keyword_density(self, content: str, keyword: str) -> float:
+        """Calculate keyword density in content"""
+        if not keyword or not content:
+            return 0.0
+            
+        total_words = len(content.split())
+        keyword_count = len(re.findall(rf'\b{re.escape(keyword)}\b', content))
+        
+        if total_words == 0:
+            return 0.0
+            
+        return round((keyword_count / total_words) * 100, 2)
+
+    def _generate_title(self, title: str, focus_keyword: str) -> str:
+        """Generate optimized title ensuring focus keyword presence"""
+        # Ensure focus keyword is in title
+        if focus_keyword and focus_keyword.lower() not in title.lower():
+            # Try to add focus keyword at the beginning
+            if len(f"{focus_keyword}: {title}") <= self.title_max_length:
+                return f"{focus_keyword}: {title}"
+            # If too long, try to truncate title to make room
+            max_title_length = self.title_max_length - len(focus_keyword) - 2
+            if max_title_length > 0:
+                truncated_title = title[:max_title_length-3]
+                return f"{focus_keyword}: {truncated_title}"
+        
+        # If focus keyword is already in title or we can't add it, just truncate if needed
+        if len(title) > self.title_max_length:
+            return title[:self.title_max_length-3] + "..."
+        
+        return title
+
+    def _generate_description(self, excerpt: str, content: str, focus_keyword: str) -> str:
+        """Generate optimized description ensuring focus keyword presence"""
+        # Start with excerpt if available, otherwise use first sentence of content
+        description = excerpt if excerpt else (re.split(r'[.!?]', content)[0] if content else "")
+        
+        # Ensure focus keyword is in description
+        if focus_keyword and focus_keyword.lower() not in description.lower():
+            # Try to add focus keyword at the beginning
+            if len(f"{focus_keyword} - {description}") <= self.description_max_length:
+                return f"{focus_keyword} - {description}"
+            # If too long, truncate description to make room
+            max_desc_length = self.description_max_length - len(focus_keyword) - 3
+            if max_desc_length > 0:
+                truncated_desc = description[:max_desc_length-3] + "..."
+                return f"{focus_keyword} - {truncated_desc}"
+        
+        # If focus keyword is already in description or we can't add it, just truncate if needed
+        if len(description) > self.description_max_length:
+            return description[:self.description_max_length-3] + "..."
+        
+        return description
+
+    def _add_region_suffix(self, title: str) -> str:
+        """Add region suffix to title"""
+        suffix = f" - {self.config.region}"
+        if len(title) + len(suffix) <= self.title_max_length:
+            return title + suffix
+        else:
+            max_title_length = self.title_max_length - len(suffix)
+            return title[:max_title_length-3] + "..." + suffix
+
+    def _validate_metadata(self, metadata: Dict[str, Any]) -> None:
+        """Validate generated metadata"""
+        # Validate title
+        if not metadata['title']:
+            raise ValueError("Title cannot be empty")
+        if len(metadata['title']) > self.title_absolute_max:
+            raise ValueError(f"Title exceeds maximum length of {self.title_absolute_max} characters")
+        if metadata['focus_keyword'] and metadata['focus_keyword'].lower() not in metadata['title'].lower():
+            raise ValueError("Focus keyword must appear in title")
+            
+        # Validate description
+        if not metadata['description']:
+            raise ValueError("Description cannot be empty")
+        if len(metadata['description']) > self.description_absolute_max:
+            raise ValueError(f"Description exceeds maximum length of {self.description_absolute_max} characters")
+        if metadata['focus_keyword'] and metadata['focus_keyword'].lower() not in metadata['description'].lower():
+            raise ValueError("Focus keyword must appear in description")
+            
+        # Validate keyword density
+        if metadata['keyword_density'] == 0.0:
+            logger.warning("Keyword density is 0.0%, consider increasing focus keyword usage in content")
+        elif metadata['keyword_density'] > 3.0:
+            logger.warning("Keyword density is above 3%, consider reducing focus keyword usage to avoid keyword stuffing")
+
+    def generate_title(self, content: str, keywords: list[str], brand_name: str = None) -> str:
+        """
+        Generate an SEO-optimized title based on content and keywords.
+        
+        Args:
+            content: The main content to generate title from
+            keywords: Target keywords to include
+            brand_name: Optional brand name to append
+            
+        Returns:
+            An optimized title string
+        """
+        try:
+            # Extract main topic/subject from content
+            main_topic = self._extract_main_topic(content)
+            
+            # Get primary keyword (first in list)
+            primary_keyword = keywords[0] if keywords else ""
+            
+            # Build title components
+            title_parts = []
+            
+            # Add primary keyword near start if relevant
+            if primary_keyword and primary_keyword.lower() not in main_topic.lower():
+                title_parts.append(primary_keyword)
+            
+            # Add main topic
+            title_parts.append(main_topic)
+            
+            # Add value proposition or power word if appropriate
+            value_prop = self._get_value_proposition(content)
+            if value_prop:
+                title_parts.append(value_prop)
+                
+            # Join parts with appropriate separators
+            title = " - ".join(filter(None, title_parts))
+            
+            # Append brand if provided
+            if brand_name:
+                # Ensure title + brand fits in ~60 chars
+                max_title_len = 60 - len(brand_name) - 3
+                if len(title) > max_title_len:
+                    title = title[:max_title_len].rstrip()
+                title = f"{title} | {brand_name}"
+            
+            # Truncate to 60 chars if needed
+            if len(title) > 60:
+                title = title[:57].rstrip() + "..."
+                
+            return title
+            
+        except Exception as e:
+            self.logger.error(f"Error generating title: {str(e)}")
+            return ""
+            
+    def _extract_main_topic(self, content: str) -> str:
+        """
+        Extract the main topic from content using NLP.
+        Uses noun phrase extraction and named entity recognition.
+        """
+        try:
+            if not self.nlp:
+                return content[:50]  # Fallback if NLP not available
+                
+            # Process content with spaCy
+            doc = self.nlp(content[:1000])  # Process first 1000 chars for efficiency
+            
+            # Extract noun phrases
+            noun_phrases = [chunk.text for chunk in doc.noun_chunks]
+            
+            # Get named entities
+            entities = [ent.text for ent in doc.ents]
+            
+            # Combine and count occurrences
+            topics = noun_phrases + entities
+            topic_counts = Counter(topics)
+            
+            # Get most common meaningful topic
+            for topic, _ in topic_counts.most_common(5):
+                # Skip very short or very long topics
+                if 3 <= len(topic) <= 40:
+                    return topic
+                    
+            return content[:50]  # Fallback to first 50 chars
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting main topic: {str(e)}")
+            return content[:50]
+
+    def _get_value_proposition(self, content: str) -> str:
+        """
+        Get relevant value proposition or power word based on content sentiment
+        and common marketing phrases.
+        """
+        try:
+            # Analyze sentiment
+            blob = TextBlob(content)
+            sentiment = blob.sentiment.polarity
+            
+            # Define power words based on sentiment
+            positive_words = [
+                "Ultimate", "Complete", "Essential", "Proven",
+                "Comprehensive", "Expert", "Professional"
+            ]
+            neutral_words = [
+                "Guide", "Tutorial", "Overview", "Analysis",
+                "Review", "Comparison"
+            ]
+            negative_words = [
+                "Solution", "Fix", "Resolve", "Prevent",
+                "Avoid", "Overcome"
+            ]
+            
+            # Select appropriate power word based on sentiment
+            if sentiment > 0.2:
+                return positive_words[hash(content) % len(positive_words)]
+            elif sentiment < -0.2:
+                return negative_words[hash(content) % len(negative_words)]
+            else:
+                return neutral_words[hash(content) % len(neutral_words)]
+                
+        except Exception as e:
+            self.logger.error(f"Error getting value proposition: {str(e)}")
+            return ""
+
+    def generate_description(self, content: str, keywords: list[str]) -> str:
+        """
+        Generate an SEO-optimized meta description.
+        
+        Args:
+            content: The main content to generate description from
+            keywords: Target keywords to include
+            
+        Returns:
+            An optimized meta description string
+        """
+        try:
+            # Extract key points from content
+            key_points = self._extract_key_points(content)
+            
+            # Build compelling description incorporating keywords naturally
+            description = self._build_description(key_points, keywords)
+            
+            # Add call-to-action if appropriate
+            cta = self._get_cta(content)
+            if cta:
+                description = f"{description} {cta}"
+                
+            # Ensure description is under 160 chars
+            if len(description) > 160:
+                description = description[:157].rstrip() + "..."
+                
+            return description
+            
+        except Exception as e:
+            self.logger.error(f"Error generating description: {str(e)}")
+            return ""
+            
+    def _extract_key_points(self, content: str, max_points: int = 3) -> list[str]:
+        """
+        Extract key points from content using NLP techniques.
+        Returns a list of the most important sentences.
+        """
+        try:
+            if not self.nlp:
+                return [content[:100]]  # Fallback if NLP not available
+                
+            # Process content with spaCy
+            doc = self.nlp(content[:2000])  # Process first 2000 chars for efficiency
+            
+            # Score sentences based on important features
+            sentence_scores = {}
+            for sent in doc.sents:
+                # Skip very short sentences
+                if len(sent.text.split()) < 4:
+                    continue
+                    
+                score = 0
+                # Score based on named entities
+                score += len([ent for ent in sent.ents])
+                # Score based on noun phrases
+                score += len([chunk for chunk in sent.noun_chunks])
+                # Score based on position (earlier sentences more important)
+                score += 1.0 / (1 + sent.start)
+                
+                sentence_scores[sent.text] = score
+            
+            # Get top scoring sentences
+            top_sentences = sorted(
+                sentence_scores.items(),
+                key=lambda x: x[1],
+                reverse=True
+            )[:max_points]
+            
+            return [sent for sent, _ in top_sentences]
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting key points: {str(e)}")
+            return [content[:100]]
+
+    def _build_description(self, key_points: list[str], max_length: int = 155) -> str:
+        """
+        Build a compelling meta description from key points.
+        Ensures the description is within character limits.
+        """
+        try:
+            # Start with first key point
+            if not key_points:
+                return ""
+                
+            description = key_points[0]
+            current_length = len(description)
+            
+            # Add additional points if space allows
+            for point in key_points[1:]:
+                # Account for spacing and ellipsis
+                if current_length + len(point) + 5 > max_length:
+                    break
+                    
+                description += f". {point}"
+                current_length = len(description)
+            
+            # Truncate if still too long
+            if len(description) > max_length:
+                description = description[:max_length-3] + "..."
+                
+            return description
+            
+        except Exception as e:
+            self.logger.error(f"Error building description: {str(e)}")
+            return key_points[0][:155] if key_points else ""
+
+    def _get_cta(self, content_type: str) -> str:
+        """
+        Get an appropriate call-to-action based on content type.
+        """
+        try:
+            cta_map = {
+                "article": "Learn more",
+                "product": "Shop now",
+                "service": "Get started",
+                "guide": "Read the guide",
+                "tutorial": "Start learning",
+                "review": "Read our review",
+                "comparison": "Compare now",
+                "news": "Read full story"
+            }
+            
+            # Default to generic CTA if type not found
+            return cta_map.get(content_type.lower(), "Learn more")
+            
+        except Exception as e:
+            self.logger.error(f"Error getting CTA: {str(e)}")
+            return "Learn more" 

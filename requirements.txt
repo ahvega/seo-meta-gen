@@ -8,4 +8,6 @@ anthropic==0.18.1
 python-wordpress-xmlrpc==2.3
 pytest==7.4.3
 tqdm==4.66.2
-langdetect==1.0.9 
+langdetect==1.0.9
+spacy==3.7.4
+textblob==0.17.1 

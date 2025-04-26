@@ -59,6 +59,17 @@ class DatabaseWriter:
                 }
             }
             
+            # Get existing metadata
+            existing_post = self.api.get_post(post_id, post_type)
+            if existing_post:
+                existing_rank_math = existing_post.get('rank_math', {})
+                
+                # Preserve existing values if not provided in new metadata
+                for field in ['title', 'description', 'focus_keyword', 'canonical_url',
+                            'og_title', 'og_description', 'twitter_title', 'twitter_description']:
+                    if not rank_math_data['rank_math'][field] and existing_rank_math.get(field):
+                        rank_math_data['rank_math'][field] = existing_rank_math[field]
+            
             success = self.api.update_post(post_id, rank_math_data, post_type)
             if success:
                 logger.info(f"Successfully updated {post_type} {post_id}")

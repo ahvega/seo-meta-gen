@@ -115,28 +115,65 @@ POST_TYPE_CONTEXT = {
 
 ## 💻 Usage
 
-### Phase 1: URL Processing
+The tool operates in three distinct phases:
+
+### Phase 1: Content Discovery
 
 ```bash
-python -m seo_meta_gen.main --source my_site_urls.json --post-type page
+python -m seo_meta_gen.main \
+  --phase discover-content \
+  --post-type page \
+  --url-file sitemap.txt \
+  --output-file discovered_content.json
 ```
 
 ### Phase 2: Metadata Generation
 
 ```bash
-python -m seo_meta_gen.main --source my_site_urls.json --post-type page --generate-metadata
+python -m seo_meta_gen.main \
+  --phase generate-metadata \
+  --post-type page \
+  --input-file discovered_content.json \
+  --output-file generated_metadata.json \
+  --provider google \
+  --region Honduras \
+  --mode partial
 ```
 
 ### Phase 3: Database Update
 
 ```bash
-python -m seo_meta_gen.main --source output/generated_metadata_page.json --write-to-db
+python -m seo_meta_gen.main \
+  --phase write-to-db \
+  --post-type page \
+  --input-file generated_metadata.json \
+  --mode partial
 ```
+
+### Operation Modes
+
+The tool supports two operation modes:
+
+1. **Full Mode** (`--mode full`):
+   - Processes all content regardless of existing metadata
+   - Default mode if not specified
+   - Useful for complete metadata regeneration
+
+2. **Partial Mode** (`--mode partial`):
+   - Only processes content with missing or incomplete metadata
+   - Checks for required fields: title, description, focus_keyword
+   - Preserves existing valid metadata
+   - More efficient for incremental updates
 
 ### Test Mode
 
 ```bash
-python test_dry_run.py --provider google --type page --url "https://your-site.com/page" --dry-run
+python test_dry_run.py \
+  --phase generate-metadata \
+  --post-type page \
+  --url "https://your-site.com/page" \
+  --provider google \
+  --dry-run
 ```
 
 ## 🔄 Workflow

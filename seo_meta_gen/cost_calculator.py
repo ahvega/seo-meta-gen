@@ -8,7 +8,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class CostCalculator:
-    # Latest API prices (as of March 2024)
+    # Latest API prices (as of April 2024)
     PRICES = {
         'anthropic': {
             'claude-3-haiku-20240307': {
@@ -32,12 +32,28 @@ class CostCalculator:
             'gpt-4': {
                 'input': 30.00 / 1_000_000,  # $30.00 per million tokens
                 'output': 60.00 / 1_000_000,  # $60.00 per million tokens
+            },
+            'gpt-4-turbo': {
+                'input': 10.00 / 1_000_000,  # $10.00 per million tokens
+                'output': 30.00 / 1_000_000,  # $30.00 per million tokens
             }
         },
         'google': {
+            'gemini-1.5-pro': {
+                'input': 0.25 / 1_000_000,  # $0.25 per million tokens
+                'output': 0.50 / 1_000_000,  # $0.50 per million tokens
+            },
+            'gemini-1.5-flash': {
+                'input': 0.10 / 1_000_000,  # $0.10 per million tokens
+                'output': 0.30 / 1_000_000,  # $0.30 per million tokens
+            },
             'gemini-pro': {
                 'input': 0.25 / 1_000_000,  # $0.25 per million tokens
                 'output': 0.50 / 1_000_000,  # $0.50 per million tokens
+            },
+            'gemini-2.5-flash-preview-04-17': {
+                'input': 0.15 / 1_000_000,  # $0.15 per million tokens
+                'output': 0.45 / 1_000_000,  # $0.45 per million tokens
             }
         },
         'deepseek': {

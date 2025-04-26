@@ -25,6 +25,7 @@ import re
 import spacy
 from collections import Counter
 from textblob import TextBlob
+import random
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1084,39 +1085,85 @@ class MetadataGenerator:
 
     def _get_value_proposition(self, content: str) -> str:
         """
-        Get relevant value proposition or power word based on content sentiment
-        and common marketing phrases.
+        Analyze content sentiment and return a relevant value proposition.
+        Enhanced with region-specific propositions and more sophisticated sentiment analysis.
+        
+        Args:
+            content (str): The content to analyze
+            
+        Returns:
+            str: A value proposition word
         """
         try:
-            # Analyze sentiment
-            blob = TextBlob(content)
-            sentiment = blob.sentiment.polarity
+            # Initialize TextBlob for sentiment analysis
+            analysis = TextBlob(content)
+            sentiment = analysis.sentiment.polarity
             
-            # Define power words based on sentiment
+            # Define value proposition words based on sentiment
             positive_words = [
-                "Ultimate", "Complete", "Essential", "Proven",
-                "Comprehensive", "Expert", "Professional"
-            ]
-            neutral_words = [
-                "Guide", "Tutorial", "Overview", "Analysis",
-                "Review", "Comparison"
-            ]
-            negative_words = [
-                "Solution", "Fix", "Resolve", "Prevent",
-                "Avoid", "Overcome"
+                "Discover", "Explore", "Learn", "Master", "Achieve",
+                "Transform", "Enhance", "Optimize", "Maximize", "Elevate"
             ]
             
-            # Select appropriate power word based on sentiment
-            if sentiment > 0.2:
-                return positive_words[hash(content) % len(positive_words)]
-            elif sentiment < -0.2:
-                return negative_words[hash(content) % len(negative_words)]
+            neutral_words = [
+                "Understand", "Navigate", "Guide", "Overview", "Insight",
+                "Perspective", "Approach", "Method", "Strategy", "Framework"
+            ]
+            
+            negative_words = [
+                "Overcome", "Solve", "Address", "Fix", "Resolve",
+                "Prevent", "Avoid", "Eliminate", "Reduce", "Minimize"
+            ]
+            
+            # Region-specific value propositions
+            region_words = {
+                "US": {
+                    "positive": ["Achieve", "Excel", "Succeed", "Thrive", "Prosper"],
+                    "neutral": ["Navigate", "Guide", "Plan", "Structure", "Organize"],
+                    "negative": ["Overcome", "Solve", "Fix", "Resolve", "Prevent"]
+                },
+                "UK": {
+                    "positive": ["Discover", "Explore", "Master", "Enhance", "Elevate"],
+                    "neutral": ["Understand", "Overview", "Insight", "Approach", "Method"],
+                    "negative": ["Address", "Fix", "Eliminate", "Reduce", "Minimize"]
+                },
+                "ES": {
+                    "positive": ["Descubre", "Explora", "Aprende", "Domina", "Mejora"],
+                    "neutral": ["Comprende", "Guía", "Visión", "Enfoque", "Método"],
+                    "negative": ["Supera", "Soluciona", "Resuelve", "Evita", "Minimiza"]
+                }
+            }
+            
+            # Select words based on sentiment and region
+            if self.region_config and self.region_config.region in region_words:
+                region_specific_words = region_words[self.region_config.region]
+                if sentiment > 0.1:
+                    words = region_specific_words["positive"]
+                elif sentiment < -0.1:
+                    words = region_specific_words["negative"]
+                else:
+                    words = region_specific_words["neutral"]
             else:
-                return neutral_words[hash(content) % len(neutral_words)]
-                
+                # Fallback to default words if no region specified
+                if sentiment > 0.1:
+                    words = positive_words
+                elif sentiment < -0.1:
+                    words = negative_words
+                else:
+                    words = neutral_words
+            
+            # Add additional context-based selection
+            if "how to" in content.lower() or "guide" in content.lower():
+                words = [w for w in words if w not in ["Discover", "Explore"]]
+            elif "problem" in content.lower() or "issue" in content.lower():
+                words = [w for w in words if w not in ["Discover", "Explore"]]
+            
+            # Select a random word from the filtered list
+            return random.choice(words)
+            
         except Exception as e:
-            self.logger.error(f"Error getting value proposition: {str(e)}")
-            return ""
+            logger.error(f"Error in value proposition generation: {str(e)}")
+            return "Discover"  # Default fallback
 
     def generate_description(self, content: str, keywords: list[str]) -> str:
         """
@@ -1246,4 +1293,303 @@ class MetadataGenerator:
             
         except Exception as e:
             self.logger.error(f"Error getting CTA: {str(e)}")
-            return "Learn more" 
+            return "Learn more"
+
+    def enhance_metadata_with_sentiment(self, metadata_file: str) -> None:
+        """
+        Enhance existing metadata with sophisticated sentiment analysis results.
+        Includes emotion detection, content type analysis, and region-specific handling.
+        
+        Args:
+            metadata_file (str): Path to the generated metadata JSON file
+        """
+        try:
+            # Read the existing metadata
+            with open(metadata_file, 'r', encoding='utf-8') as f:
+                metadata_list = json.load(f)
+            
+            enhanced_metadata = []
+            for entry in metadata_list:
+                # Get content for analysis
+                content = entry.get('content', '')
+                if not content:
+                    logger.warning(f"No content found for post {entry.get('post_id')}, skipping sentiment analysis")
+                    enhanced_metadata.append(entry)
+                    continue
+                
+                # Perform comprehensive analysis
+                analysis = TextBlob(content)
+                sentiment = analysis.sentiment.polarity
+                subjectivity = analysis.sentiment.subjectivity
+                
+                # Detect content type and emotions
+                content_type = self._detect_content_type(content)
+                emotions = self._detect_emotions(content)
+                
+                # Get value proposition based on comprehensive analysis
+                value_prop = self._get_value_proposition(content)
+                
+                # Get region-specific enhancements
+                region_enhancements = self._get_region_enhancements(content) if self.region_config else {}
+                
+                # Enhance the metadata
+                enhanced_entry = {
+                    **entry,  # Keep all existing metadata
+                    'sentiment_score': round(sentiment, 2),
+                    'subjectivity_score': round(subjectivity, 2),
+                    'content_type': content_type,
+                    'detected_emotions': emotions,
+                    'value_proposition': value_prop,
+                    'enhanced_title': self._enhance_title_with_sentiment(
+                        entry.get('title', ''),
+                        value_prop,
+                        sentiment,
+                        content_type,
+                        emotions,
+                        region_enhancements
+                    ),
+                    'enhanced_description': self._enhance_description_with_sentiment(
+                        entry.get('description', ''),
+                        value_prop,
+                        sentiment,
+                        content_type,
+                        emotions,
+                        region_enhancements
+                    ),
+                    'region_enhancements': region_enhancements
+                }
+                
+                enhanced_metadata.append(enhanced_entry)
+            
+            # Save enhanced metadata back to file
+            with open(metadata_file, 'w', encoding='utf-8') as f:
+                json.dump(enhanced_metadata, f, ensure_ascii=False, indent=2)
+                
+            logger.info(f"Successfully enhanced metadata in {metadata_file}")
+            
+        except Exception as e:
+            logger.error(f"Error enhancing metadata with sentiment: {str(e)}")
+            raise
+
+    def _detect_content_type(self, content: str) -> str:
+        """
+        Detect the type of content based on keywords and structure.
+        
+        Args:
+            content (str): Content to analyze
+            
+        Returns:
+            str: Detected content type
+        """
+        content = content.lower()
+        
+        # Define content type patterns
+        content_types = {
+            'how_to': ['how to', 'step by step', 'tutorial', 'guide'],
+            'problem_solution': ['problem', 'issue', 'challenge', 'solution'],
+            'comparison': ['vs', 'versus', 'compared to', 'difference between'],
+            'review': ['review', 'rating', 'test', 'evaluation'],
+            'news': ['announced', 'released', 'launched', 'breaking'],
+            'list': ['top', 'best', 'list of', 'ways to'],
+            'case_study': ['case study', 'success story', 'example', 'result']
+        }
+        
+        # Check for each content type
+        for content_type, keywords in content_types.items():
+            if any(keyword in content for keyword in keywords):
+                return content_type
+            
+        return 'general'
+
+    def _detect_emotions(self, content: str) -> list[str]:
+        """
+        Detect emotions in the content using keyword analysis.
+        
+        Args:
+            content (str): Content to analyze
+            
+        Returns:
+            list[str]: List of detected emotions
+        """
+        content = content.lower()
+        emotions = []
+        
+        # Define emotion keywords
+        emotion_keywords = {
+            'excitement': ['amazing', 'incredible', 'excited', 'thrilled'],
+            'urgency': ['now', 'today', 'limited time', 'hurry'],
+            'trust': ['proven', 'guaranteed', 'trusted', 'reliable'],
+            'fear': ['avoid', 'prevent', 'warning', 'danger'],
+            'curiosity': ['discover', 'learn', 'find out', 'revealed'],
+            'satisfaction': ['enjoy', 'love', 'perfect', 'best']
+        }
+        
+        # Check for each emotion
+        for emotion, keywords in emotion_keywords.items():
+            if any(keyword in content for keyword in keywords):
+                emotions.append(emotion)
+            
+        return emotions
+
+    def _get_region_enhancements(self, content: str) -> dict:
+        """
+        Get region-specific enhancements based on content and region config.
+        
+        Args:
+            content (str): Content to analyze
+            
+        Returns:
+            dict: Region-specific enhancements
+        """
+        if not self.region_config:
+            return {}
+        
+        region = self.region_config.region
+        enhancements = {}
+        
+        # Region-specific patterns
+        region_patterns = {
+            'US': {
+                'cta': ['Get started', 'Try now', 'Join us'],
+                'tone': ['direct', 'action-oriented'],
+                'keywords': ['best', 'top', 'premium']
+            },
+            'UK': {
+                'cta': ['Learn more', 'Find out', 'Discover'],
+                'tone': ['professional', 'informative'],
+                'keywords': ['expert', 'quality', 'trusted']
+            },
+            'ES': {
+                'cta': ['Descubre', 'Aprende', 'Comienza'],
+                'tone': ['friendly', 'engaging'],
+                'keywords': ['mejor', 'excelente', 'calidad']
+            }
+        }
+        
+        if region in region_patterns:
+            enhancements = region_patterns[region]
+        
+        return enhancements
+
+    def _enhance_title_with_sentiment(self, title: str, value_prop: str, sentiment: float, 
+                                    content_type: str, emotions: list[str], 
+                                    region_enhancements: dict) -> str:
+        """
+        Enhance title with sophisticated sentiment analysis.
+        
+        Args:
+            title (str): Original title
+            value_prop (str): Value proposition
+            sentiment (float): Sentiment score
+            content_type (str): Detected content type
+            emotions (list[str]): Detected emotions
+            region_enhancements (dict): Region-specific enhancements
+            
+        Returns:
+            str: Enhanced title
+        """
+        try:
+            # Don't modify if title is already optimized
+            if value_prop.lower() in title.lower():
+                return title
+            
+            # Get region-specific CTA if available
+            cta = region_enhancements.get('cta', [''])[0]
+            
+            # Enhance based on content type
+            if content_type == 'how_to':
+                enhanced = f"How to {value_prop} {title}"
+            elif content_type == 'problem_solution':
+                enhanced = f"{value_prop} Your {title} Problem"
+            elif content_type == 'comparison':
+                enhanced = f"{title} vs {value_prop} Alternatives"
+            elif content_type == 'review':
+                enhanced = f"{value_prop} Review: {title}"
+            else:
+                # Default enhancement based on sentiment
+                if sentiment > 0.1:
+                    enhanced = f"{value_prop}: {title}"
+                elif sentiment < -0.1:
+                    enhanced = f"{title} - {value_prop}"
+                else:
+                    enhanced = title
+                
+            # Add CTA if appropriate
+            if cta and 'urgency' in emotions:
+                enhanced = f"{enhanced} - {cta}"
+            
+            # Ensure title length is within limits
+            if len(enhanced) > self.title_max_length:
+                enhanced = enhanced[:self.title_max_length-3] + "..."
+            
+            return enhanced
+            
+        except Exception as e:
+            logger.error(f"Error enhancing title with sentiment: {str(e)}")
+            return title
+
+    def _enhance_description_with_sentiment(self, description: str, value_prop: str, 
+                                          sentiment: float, content_type: str, 
+                                          emotions: list[str], 
+                                          region_enhancements: dict) -> str:
+        """
+        Enhance description with sophisticated sentiment analysis.
+        
+        Args:
+            description (str): Original description
+            value_prop (str): Value proposition
+            sentiment (float): Sentiment score
+            content_type (str): Detected content type
+            emotions (list[str]): Detected emotions
+            region_enhancements (dict): Region-specific enhancements
+            
+        Returns:
+            str: Enhanced description
+        """
+        try:
+            # Don't modify if description is already optimized
+            if value_prop.lower() in description.lower():
+                return description
+            
+            # Get region-specific CTA if available
+            cta = region_enhancements.get('cta', [''])[0]
+            
+            # Enhance based on content type
+            if content_type == 'how_to':
+                enhanced = f"Learn how to {value_prop} {description}"
+            elif content_type == 'problem_solution':
+                enhanced = f"Discover how to {value_prop} {description}"
+            elif content_type == 'comparison':
+                enhanced = f"Compare {description} with {value_prop} alternatives"
+            elif content_type == 'review':
+                enhanced = f"Read our {value_prop} review of {description}"
+            else:
+                # Default enhancement based on sentiment
+                if sentiment > 0.1:
+                    enhanced = f"{value_prop} and {description}"
+                elif sentiment < -0.1:
+                    enhanced = f"{description} - {value_prop} now"
+                else:
+                    enhanced = description
+                
+            # Add emotional triggers
+            if 'urgency' in emotions:
+                enhanced = f"{enhanced} - Limited time offer!"
+            elif 'trust' in emotions:
+                enhanced = f"{enhanced} - Trusted by professionals"
+            elif 'excitement' in emotions:
+                enhanced = f"{enhanced} - Don't miss out!"
+            
+            # Add CTA if appropriate
+            if cta:
+                enhanced = f"{enhanced} {cta}"
+            
+            # Ensure description length is within limits
+            if len(enhanced) > self.description_max_length:
+                enhanced = enhanced[:self.description_max_length-3] + "..."
+            
+            return enhanced
+            
+        except Exception as e:
+            logger.error(f"Error enhancing description with sentiment: {str(e)}")
+            return description 

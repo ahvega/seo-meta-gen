@@ -6,6 +6,7 @@ import argparse
 import logging
 from typing import Optional
 from .config import Config, load_config, RegionConfig
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -52,8 +53,13 @@ def main():
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
     
-    # Load configuration
-    config = load_config()
+    # Load configuration with required parameters
+    config = Config(
+        wordpress_url=os.getenv('WORDPRESS_URL', ''),
+        wordpress_username=os.getenv('WORDPRESS_USERNAME', ''),
+        wordpress_password=os.getenv('WORDPRESS_PASSWORD', ''),
+        preferred_ai_provider=args.provider
+    )
     
     # Update config with command line arguments
     config.provider = args.provider
@@ -87,21 +93,45 @@ def main():
             if not args.input_file:
                 raise ValueError("--input-file is required for enhance-sentiment phase")
             from .metadata_generator import MetadataGenerator
-            generator = MetadataGenerator(config)
+            # Create a minimal config without any AI provider
+            sentiment_config = Config(
+                wordpress_url=os.getenv('WORDPRESS_URL', ''),
+                wordpress_username=os.getenv('WORDPRESS_USERNAME', ''),
+                wordpress_password=os.getenv('WORDPRESS_PASSWORD', ''),
+                preferred_ai_provider=None  # Explicitly set to None to avoid AI initialization
+            )
+            sentiment_config.region_config = config.region_config
+            generator = MetadataGenerator(sentiment_config)
             generator.enhance_metadata_with_sentiment(args.input_file)
             
         elif args.phase == 'enhance-value-prop':
             if not args.input_file:
                 raise ValueError("--input-file is required for enhance-value-prop phase")
             from .metadata_generator import MetadataGenerator
-            generator = MetadataGenerator(config)
+            # Create a minimal config without AI provider for value proposition
+            value_prop_config = Config(
+                wordpress_url=os.getenv('WORDPRESS_URL', ''),
+                wordpress_username=os.getenv('WORDPRESS_USERNAME', ''),
+                wordpress_password=os.getenv('WORDPRESS_PASSWORD', ''),
+                preferred_ai_provider='none'  # No AI provider needed for value prop
+            )
+            value_prop_config.region_config = config.region_config
+            generator = MetadataGenerator(value_prop_config)
             generator.enhance_metadata_with_value_prop(args.input_file)
             
         elif args.phase == 'enhance-region':
             if not args.input_file:
                 raise ValueError("--input-file is required for enhance-region phase")
             from .metadata_generator import MetadataGenerator
-            generator = MetadataGenerator(config)
+            # Create a minimal config without AI provider for region enhancement
+            region_config = Config(
+                wordpress_url=os.getenv('WORDPRESS_URL', ''),
+                wordpress_username=os.getenv('WORDPRESS_USERNAME', ''),
+                wordpress_password=os.getenv('WORDPRESS_PASSWORD', ''),
+                preferred_ai_provider='none'  # No AI provider needed for region
+            )
+            region_config.region_config = config.region_config
+            generator = MetadataGenerator(region_config)
             generator.enhance_metadata_with_region(args.input_file)
             
         elif args.phase == 'write-to-db':

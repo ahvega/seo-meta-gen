@@ -57,7 +57,7 @@ class MetadataGenerator:
         self.last_input_tokens = 0
         self.last_output_tokens = 0
         self.last_total_tokens = 0
-        self.provider = config.provider or os.getenv('PREFERRED_AI_PROVIDER', 'google')
+        self.provider = config.provider  # Use config value directly without fallback
         self.model = None
         self.cost_calculator = CostCalculator()
         self.language = config.language  # Store the forced language if provided
@@ -72,7 +72,11 @@ class MetadataGenerator:
         self.keyword_max_count = 10  # Arbitrary limit for safety
         self.used_keywords = set()  # Track used keywords to avoid repetition
         logger.debug(f"Initializing MetadataGenerator with provider: {self.provider}")
-        self._initialize_provider()
+        
+        # Only initialize provider if one is specified
+        if self.provider:
+            self._initialize_provider()
+            
         # Load spaCy model for NLP
         try:
             self.nlp = spacy.load("en_core_web_sm")
@@ -83,6 +87,11 @@ class MetadataGenerator:
     def _initialize_provider(self):
         """Initialize the selected AI provider with appropriate credentials"""
         try:
+            # Skip initialization if no provider is specified
+            if self.provider is None:
+                logger.debug("No AI provider specified, skipping initialization")
+                return
+                
             # Ensure provider value matches AIProvider enum
             valid_providers = [p.value for p in AIProvider]
             logger.debug(f"Valid providers: {valid_providers}")
@@ -1065,41 +1074,136 @@ class MetadataGenerator:
             language (str): Content language ('es' or 'en')
             
         Returns:
-            str: A value proposition word or phrase
+            str: A value proposition phrase that adds real value to the content
         """
         try:
-            # Define value propositions by language
-            value_props = {
+            # Define value propositions by service type and language
+            service_value_props = {
                 'es': {
-                    'positive': ['Descubre', 'Transforma', 'Optimiza', 'Potencia', 'Maximiza'],
-                    'neutral': ['Gestiona', 'Implementa', 'Desarrolla', 'Aprende', 'Explora'],
-                    'negative': ['Resuelve', 'Protege', 'Previene', 'Mejora', 'Controla']
+                    'stm_service': {
+                        'consulting': [
+                            'Expertos en Consultoría',
+                            'Soluciones Empresariales',
+                            'Asesoramiento Profesional'
+                        ],
+                        'training': [
+                            'Formación Especializada',
+                            'Capacitación Profesional',
+                            'Desarrollo de Habilidades'
+                        ],
+                        'implementation': [
+                            'Implementación Eficiente',
+                            'Soluciones Prácticas',
+                            'Resultados Garantizados'
+                        ],
+                        'support': [
+                            'Soporte 24/7',
+                            'Asistencia Personalizada',
+                            'Atención Continua'
+                        ]
+                    }
                 },
                 'en': {
-                    'positive': ['Discover', 'Transform', 'Optimize', 'Enhance', 'Maximize'],
-                    'neutral': ['Manage', 'Implement', 'Develop', 'Learn', 'Explore'],
-                    'negative': ['Solve', 'Protect', 'Prevent', 'Improve', 'Control']
+                    'stm_service': {
+                        'consulting': [
+                            'Expert Consulting',
+                            'Business Solutions',
+                            'Professional Guidance'
+                        ],
+                        'training': [
+                            'Specialized Training',
+                            'Professional Development',
+                            'Skill Enhancement'
+                        ],
+                        'implementation': [
+                            'Efficient Implementation',
+                            'Practical Solutions',
+                            'Guaranteed Results'
+                        ],
+                        'support': [
+                            '24/7 Support',
+                            'Personalized Assistance',
+                            'Continuous Care'
+                        ]
+                    }
                 }
             }
 
             # Use Spanish if language not specified or invalid
-            lang = language if language in value_props else 'es'
-            words = value_props[lang]
-
-            # Initialize TextBlob for sentiment analysis
+            lang = language if language in service_value_props else 'es'
+            
+            # Detect service type from content
+            service_type = self._detect_service_type(content)
+            
+            # Get relevant value propositions based on service type
+            if service_type in service_value_props[lang]['stm_service']:
+                value_props = service_value_props[lang]['stm_service'][service_type]
+            else:
+                # Default value propositions if service type not detected
+                value_props = service_value_props[lang]['stm_service']['consulting']
+            
+            # Analyze content sentiment and tone
             analysis = TextBlob(content)
             sentiment = analysis.sentiment.polarity
             
-            # Select words based on sentiment
+            # Select value proposition based on sentiment and content analysis
             if sentiment > 0.1:
-                return random.choice(words['positive'])
-            if sentiment < -0.1:
-                return random.choice(words['negative'])
-            return random.choice(words['neutral'])
+                # Positive sentiment - focus on benefits and results
+                return f"{value_props[0]} | Resultados Comprobados"
+            elif sentiment < -0.1:
+                # Negative sentiment - focus on problem-solving
+                return f"{value_props[1]} | Soluciones Efectivas"
+            else:
+                # Neutral sentiment - focus on expertise and reliability
+                return f"{value_props[2]} | Experiencia Garantizada"
             
         except Exception as e:
             logger.error(f"Error in value proposition generation: {str(e)}")
-            return "Descubre" if language == 'es' else "Discover"  # Default fallback
+            return "Expertos en Soluciones" if language == 'es' else "Expert Solutions"
+
+    def _detect_service_type(self, content: str) -> str:
+        """
+        Detect the type of service based on content analysis.
+        
+        Args:
+            content (str): Content to analyze
+            
+        Returns:
+            str: Detected service type
+        """
+        content = content.lower()
+        
+        # Define service type patterns
+        service_patterns = {
+            'consulting': [
+                'consultoría', 'asesoramiento', 'asesoría', 'consulting', 'advice',
+                'asesor', 'consultor', 'orientación', 'guía'
+            ],
+            'training': [
+                'formación', 'capacitación', 'entrenamiento', 'training', 'curso',
+                'taller', 'workshop', 'seminario', 'educación'
+            ],
+            'implementation': [
+                'implementación', 'desarrollo', 'desplegar', 'implement', 'deploy',
+                'instalación', 'configuración', 'setup', 'aplicación'
+            ],
+            'support': [
+                'soporte', 'apoyo', 'asistencia', 'support', 'help', 'ayuda',
+                'mantenimiento', 'servicio', 'atención'
+            ]
+        }
+        
+        # Count matches for each service type
+        service_matches = {}
+        for service_type, keywords in service_patterns.items():
+            matches = sum(1 for keyword in keywords if keyword in content)
+            service_matches[service_type] = matches
+        
+        # Return service type with most matches
+        if service_matches:
+            return max(service_matches.items(), key=lambda x: x[1])[0]
+        
+        return 'consulting'  # Default to consulting if no clear match
 
     def _detect_industry(self, content: str) -> str:
         """
@@ -1385,12 +1489,12 @@ class MetadataGenerator:
         Args:
             metadata_file (str): Path to the generated metadata JSON file
         """
-        # Skip AI initialization since we're using TextBlob
+        # Skip AI initialization since we're using local analysis
         self.provider = None
         self.model = None
         
         try:
-            # Rest of the method remains the same
+            # Read the existing metadata
             with open(metadata_file, 'r', encoding='utf-8') as f:
                 metadata_list = json.load(f)
             
@@ -1398,48 +1502,119 @@ class MetadataGenerator:
             if not isinstance(metadata_list, list):
                 metadata_list = [metadata_list]
             
+            if not metadata_list:
+                logger.warning(f"No metadata entries found in {metadata_file}")
+                return
+            
             enhanced_metadata = []
             for entry in metadata_list:
                 try:
-                    # Get metadata fields for analysis
-                    metadata = entry.get('metadata', {})
-                    content_text = " ".join([
-                        metadata.get('meta_title', ''),
-                        metadata.get('meta_description', ''),
-                        metadata.get('focus_keyword', '')
-                    ]).strip()
-                    
-                    if not content_text:
-                        logger.warning(f"No content fields found for post {metadata.get('post_id')}, skipping sentiment analysis")
-                        enhanced_metadata.append(entry)
+                    # Skip if entry is empty or None
+                    if not entry:
                         continue
                     
-                    # Perform sentiment analysis
-                    analysis = TextBlob(content_text)
-                    sentiment = analysis.sentiment.polarity
-                    subjectivity = analysis.sentiment.subjectivity
-                    
-                    # Detect emotions
-                    emotions = self._detect_emotions(content_text)
-                    
-                    # Create enhanced metadata while preserving structure
-                    enhanced_entry = {
-                        **entry,  # Keep URL and post_id at root level
-                        'metadata': {
-                            **metadata,  # Keep all existing metadata fields
-                            'sentiment_analysis': {  # Add sentiment data in a new section
-                                'sentiment_score': round(sentiment, 2),
-                                'subjectivity_score': round(subjectivity, 2),
-                                'detected_emotions': emotions,
-                                'analyzed_fields': ['meta_title', 'meta_description', 'focus_keyword']
+                    # Handle nested structure (e.g., stm_staff)
+                    for post_type, items in entry.items():
+                        if not isinstance(items, list):
+                            continue
+                            
+                        for item in items:
+                            # Get the metadata dictionary
+                            metadata = item.get('metadata', {})
+                            
+                            # Extract content fields for analysis
+                            content_fields = [
+                                metadata.get('meta_title', ''),
+                                metadata.get('meta_description', ''),
+                                metadata.get('focus_keyword', '')
+                            ]
+                            
+                            # Filter out empty fields
+                            content_fields = [field for field in content_fields if field]
+                            
+                            if not content_fields:
+                                logger.warning(f"No content fields found for entry {item.get('post_id')}, skipping sentiment analysis")
+                                enhanced_metadata.append(entry)
+                                continue
+                            
+                            # Combine fields for analysis
+                            content_text = " ".join(content_fields)
+                            
+                            # Define Spanish sentiment keywords
+                            positive_words = [
+                                'experto', 'experta', 'experiencia', 'éxito', 'resultados', 'potencia', 'impulsa',
+                                'transforma', 'mejora', 'optimiza', 'eficiente', 'eficaz', 'calidad', 'excelente',
+                                'destacado', 'líder', 'profesional', 'especializado', 'especializada', 'conecta',
+                                'aprende', 'descubre', 'crece', 'desarrolla', 'innova', 'crea', 'soluciona',
+                                'resuelve', 'mejor', 'mejorar', 'beneficio', 'ventaja', 'valor', 'confianza',
+                                'garantía', 'seguridad', 'satisfacción', 'felicidad', 'alegría', 'positivo',
+                                'positiva', 'optimista', 'motivado', 'motivada', 'inspirado', 'inspirada'
+                            ]
+                            
+                            negative_words = [
+                                'problema', 'dificultad', 'desafío', 'retroceso', 'fracaso', 'error', 'fallo',
+                                'deficiente', 'inadecuado', 'inadecuada', 'limitado', 'limitada', 'restricción',
+                                'obstáculo', 'barrera', 'conflicto', 'contradicción', 'inconsistencia', 'duda',
+                                'incertidumbre', 'riesgo', 'peligro', 'amenaza', 'desventaja', 'desventaja',
+                                'debilidad', 'vulnerabilidad', 'inseguridad', 'preocupación', 'ansiedad',
+                                'estrés', 'frustración', 'decepción', 'tristeza', 'negativo', 'negativa',
+                                'pesimista', 'desmotivado', 'desmotivada'
+                            ]
+                            
+                            # Count positive and negative words
+                            content_lower = content_text.lower()
+                            positive_count = sum(1 for word in positive_words if word in content_lower)
+                            negative_count = sum(1 for word in negative_words if word in content_lower)
+                            
+                            # Calculate sentiment score (-1 to 1)
+                            total_words = len(content_text.split())
+                            if total_words > 0:
+                                sentiment_score = (positive_count - negative_count) / total_words
+                            else:
+                                sentiment_score = 0.0
+                            
+                            # Calculate subjectivity (0 to 1)
+                            subjective_words = positive_count + negative_count
+                            if total_words > 0:
+                                subjectivity_score = subjective_words / total_words
+                            else:
+                                subjectivity_score = 0.0
+                            
+                            # Detect emotions based on keywords
+                            emotions = []
+                            if positive_count > negative_count:
+                                emotions.extend(['confianza', 'optimismo', 'motivación'])
+                            elif negative_count > positive_count:
+                                emotions.extend(['preocupación', 'desafío', 'determinación'])
+                            else:
+                                emotions.extend(['neutral', 'equilibrio', 'objetividad'])
+                            
+                            # Create enhanced metadata while preserving structure
+                            enhanced_item = {
+                                **item,  # Keep all existing fields
+                                'metadata': {
+                                    **metadata,  # Keep all existing metadata fields
+                                    'sentiment_analysis': {  # Add sentiment data in metadata
+                                        'sentiment_score': round(sentiment_score, 2),
+                                        'subjectivity_score': round(subjectivity_score, 2),
+                                        'detected_emotions': emotions,
+                                        'analyzed_fields': ['meta_title', 'meta_description', 'focus_keyword'],
+                                        'word_counts': {
+                                            'positive': positive_count,
+                                            'negative': negative_count,
+                                            'total': total_words
+                                        }
+                                    }
+                                }
                             }
-                        }
-                    }
+                            
+                            # Update the item in the list
+                            items[items.index(item)] = enhanced_item
                     
-                    enhanced_metadata.append(enhanced_entry)
+                    enhanced_metadata.append(entry)
                     
                 except Exception as e:
-                    logger.error(f"Error processing entry {entry.get('post_id')}: {str(e)}")
+                    logger.error(f"Error processing entry: {str(e)}")
                     enhanced_metadata.append(entry)  # Keep original entry if enhancement fails
             
             # Save enhanced metadata back to file
@@ -1480,59 +1655,80 @@ class MetadataGenerator:
             enhanced_metadata = []
             for entry in metadata_list:
                 try:
-                    # Get metadata fields for analysis
-                    metadata = entry.get('metadata', {})
-                    content_text = " ".join([
-                        metadata.get('meta_title', ''),
-                        metadata.get('meta_description', ''),
-                        metadata.get('focus_keyword', '')
-                    ]).strip()
-                    
-                    if not content_text:
-                        logger.warning(f"No content fields found for post {metadata.get('post_id')}, skipping value proposition analysis")
-                        enhanced_metadata.append(entry)
+                    # Skip if entry is empty or None
+                    if not entry:
                         continue
                     
-                    # Get language from metadata
-                    language = metadata.get('language', 'es')
-                    
-                    # Get value proposition with language
-                    value_prop = self._get_value_proposition(content_text, language)
-                    
-                    # Detect content type
-                    content_type = self._detect_content_type(content_text)
-                    
-                    # Get original title and description for enhancement
-                    original_title = metadata.get('meta_title', '')
-                    original_description = metadata.get('meta_description', '')
-                    
-                    # Create enhanced metadata while preserving structure
-                    enhanced_entry = {
-                        **entry,  # Keep URL and post_id at root level
-                        'metadata': {
-                            **metadata,  # Keep all existing metadata fields
-                            'value_proposition_analysis': {  # Add value prop data in a new section
-                                'value_proposition': value_prop,
-                                'content_type': content_type,
-                                'enhanced_title': self._enhance_title_with_value_prop(
-                                    original_title,
-                                    value_prop,
-                                    content_type
-                                ),
-                                'enhanced_description': self._enhance_description_with_value_prop(
-                                    original_description,
-                                    value_prop,
-                                    content_type
-                                ),
-                                'analyzed_fields': ['meta_title', 'meta_description', 'focus_keyword']
+                    # Handle nested structure (e.g., stm_staff)
+                    for post_type, items in entry.items():
+                        if not isinstance(items, list):
+                            continue
+                            
+                        for item in items:
+                            # Get the metadata dictionary
+                            metadata = item.get('metadata', {})
+                            
+                            # Extract content fields for analysis
+                            content_fields = [
+                                metadata.get('meta_title', ''),
+                                metadata.get('meta_description', ''),
+                                metadata.get('focus_keyword', '')
+                            ]
+                            
+                            # Filter out empty fields
+                            content_fields = [field for field in content_fields if field]
+                            
+                            if not content_fields:
+                                logger.warning(f"No content fields found for entry {item.get('post_id')}, skipping value proposition analysis")
+                                enhanced_metadata.append(entry)
+                                continue
+                            
+                            # Combine fields for analysis
+                            content_text = " ".join(content_fields)
+                            
+                            # Get language from metadata
+                            language = metadata.get('language', 'es')
+                            
+                            # Get value proposition with language
+                            value_prop = self._get_value_proposition(content_text, language)
+                            
+                            # Detect content type
+                            content_type = self._detect_content_type(content_text)
+                            
+                            # Get original title and description for enhancement
+                            original_title = metadata.get('meta_title', '')
+                            original_description = metadata.get('meta_description', '')
+                            
+                            # Create enhanced metadata while preserving structure
+                            enhanced_item = {
+                                **item,  # Keep all existing fields
+                                'metadata': {
+                                    **metadata,  # Keep all existing metadata fields
+                                    'value_proposition_analysis': {  # Add value prop data in metadata
+                                        'value_proposition': value_prop,
+                                        'content_type': content_type,
+                                        'enhanced_title': self._enhance_title_with_value_prop(
+                                            original_title,
+                                            value_prop,
+                                            content_type
+                                        ),
+                                        'enhanced_description': self._enhance_description_with_value_prop(
+                                            original_description,
+                                            value_prop,
+                                            content_type
+                                        ),
+                                        'analyzed_fields': ['meta_title', 'meta_description', 'focus_keyword']
+                                    }
+                                }
                             }
-                        }
-                    }
+                            
+                            # Update the item in the list
+                            items[items.index(item)] = enhanced_item
                     
-                    enhanced_metadata.append(enhanced_entry)
+                    enhanced_metadata.append(entry)
                     
                 except Exception as e:
-                    logger.error(f"Error processing entry {entry.get('post_id')}: {str(e)}")
+                    logger.error(f"Error processing entry: {str(e)}")
                     enhanced_metadata.append(entry)  # Keep original entry if enhancement fails
             
             # Save enhanced metadata back to file
